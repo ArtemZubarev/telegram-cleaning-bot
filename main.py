@@ -1,25 +1,37 @@
 import asyncio
-import logging
-import os
-from datetime import datetime
-
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime
+import os
+import gspread
+from google.oauth2.service_account import Credentials
 
-from aiohttp import web  # для "фейкового" веб-сервера на Render
-
-logging.basicConfig(level=logging.INFO)
-
+# --- Настройки бота ---
 TOKEN = os.getenv("BOT_TOKEN")
-PORT = int(os.getenv("PORT", "8080"))  # Render передает порт через переменную PORT
-
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Список номеров
+# --- Настройки Google Sheets ---
+SERVICE_ACCOUNT_FILE = "service_account.json"
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SPREADSHEET_ID = "ВАШ_ID_ТАБЛИЦЫ"  # вставь ID своей таблицы
+
+creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+gc = gspread.authorize(creds)
+sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+
+def append_problem_to_sheets(name, room, location, description, photo):
+    time_now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    try:
+        sheet.append_row([time_now, name, room, location, description, photo, ""])
+        print(f"✅ Проблема записана: {room} / {location}")
+    except Exception as e:
+        print("Ошибка записи в Google Sheets:", e)
+
+# --- Список номеров ---
 rooms = [
     "101", "102", "103", "104",
     "201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "211", "212",
@@ -27,21 +39,18 @@ rooms = [
     "A1", "A2"
 ]
 
-# FSM для неисправности
+# --- FSM для неисправности ---
 class ProblemForm(StatesGroup):
     description = State()
     location = State()
     photo = State()
 
-# Главное меню (номера + хостел)
+# --- Меню ---
 def rooms_menu():
-    keyboard = []
-    for room in rooms:
-        keyboard.append([InlineKeyboardButton(text=room, callback_data=f"room_{room}")])
+    keyboard = [[InlineKeyboardButton(text=r, callback_data=f"room_{r}")] for r in rooms]
     keyboard.append([InlineKeyboardButton(text="Хостел", callback_data="hostel_menu")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# Действия для номера
 def room_actions(room_number):
     keyboard = [
         [InlineKeyboardButton(text="Уборка выполнена", callback_data=f"clean_done_{room_number}")],
@@ -50,23 +59,19 @@ def room_actions(room_number):
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# Типы уборки для номера
-def cleaning_types(room_number):
-    keyboard = [
-        [InlineKeyboardButton(text="Текущая", callback_data=f"type_current_{room_number}")],
-        [InlineKeyboardButton(text="После выезда", callback_data=f"type_checkout_{room_number}")],
-        [InlineKeyboardButton(text="Генеральная", callback_data=f"type_general_{room_number}")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+def location_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Прихожая", callback_data="loc_hall")],
+        [InlineKeyboardButton(text="Комната", callback_data="loc_room")],
+        [InlineKeyboardButton(text="Туалет", callback_data="loc_wc")]
+    ])
 
-# Кнопка возврата к списку номеров
 def back_to_rooms_button():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="К номерам", callback_data="back_to_rooms")]
     ])
 
 # --- Хостел ---
-# Меню хостела
 def hostel_menu():
     keyboard = [
         [InlineKeyboardButton(text="1 комната", callback_data="hostel_room1")],
@@ -80,22 +85,18 @@ def hostel_menu():
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# Меню для комнаты хостела
-def hostel_room_menu(room_number: int):
+def hostel_room_menu(room_number):
     hostel_rooms = {
         1: [f"M{i}" for i in range(1, 9)],
         2: [f"M{i}" for i in range(9, 17)],
         3: [f"M{i}" for i in range(17, 25)],
         4: [f"M{i}" for i in range(25, 29)],
     }
-    keyboard = []
-    for r in hostel_rooms[room_number]:
-        keyboard.append([InlineKeyboardButton(text=r, callback_data=f"hostel_bed_{r}")])
+    keyboard = [[InlineKeyboardButton(text=r, callback_data=f"hostel_bed_{r}")] for r in hostel_rooms[room_number]]
     keyboard.append([InlineKeyboardButton(text="--", callback_data="none")])
     keyboard.append([InlineKeyboardButton(text="Назад", callback_data="hostel_menu")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# Действия для кровати/зоны
 def hostel_actions(name):
     keyboard = [
         [InlineKeyboardButton(text="Уборка выполнена", callback_data=f"hostel_clean_{name}")],
@@ -104,21 +105,12 @@ def hostel_actions(name):
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# После "Уборка выполнена" (в хостеле)
 def hostel_clean_menu(name):
     keyboard = [
         [InlineKeyboardButton(text="Смена белья", callback_data=f"hostel_bed_change_{name}")],
         [InlineKeyboardButton(text="Назад", callback_data=f"hostel_bed_{name}")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-# Кнопки мест неисправности (шаг FSM)
-def location_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Прихожая", callback_data="loc_hall")],
-        [InlineKeyboardButton(text="Комната", callback_data="loc_room")],
-        [InlineKeyboardButton(text="Туалет", callback_data="loc_wc")]
-    ])
 
 # --- Handlers ---
 @dp.message(Command("start"))
@@ -130,7 +122,7 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
     data = callback.data
     user = callback.from_user
 
-    # --- ОБЫЧНЫЕ НОМЕРА ---
+    # --- Обычные номера ---
     if data == "back_to_rooms":
         await state.clear()
         await callback.message.edit_text("Выберите комнату:", reply_markup=rooms_menu())
@@ -139,24 +131,6 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
         room_number = data.split("_")[1]
         await state.clear()
         await callback.message.edit_text(f"Комната {room_number}. Выберите действие:", reply_markup=room_actions(room_number))
-
-    elif data.startswith("clean_done_"):
-        room_number = data.split("_")[2]
-        await callback.message.edit_text(f"Выберите тип уборки для комнаты {room_number}:", reply_markup=cleaning_types(room_number))
-
-    elif data.startswith("type_"):
-        parts = data.split("_")
-        cleaning_type = parts[1]
-        room_number = parts[2]
-        time_now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        await callback.message.edit_text(
-            f"Спасибо!\n\n"
-            f"Комната: {room_number}\n"
-            f"Тип уборки: {cleaning_type}\n"
-            f"Время: {time_now}\n"
-            f"Пользователь: {user.full_name} (@{user.username})",
-            reply_markup=back_to_rooms_button()
-        )
 
     elif data.startswith("problem_"):
         room_number = data.split("_")[1]
@@ -169,7 +143,7 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
             ])
         )
 
-    # --- ХОСТЕЛ ---
+    # --- Хостел ---
     elif data == "hostel_menu":
         await state.clear()
         await callback.message.edit_text("Выберите зону хостела:", reply_markup=hostel_menu())
@@ -181,31 +155,6 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
     elif data.startswith("hostel_bed_"):
         bed = data.replace("hostel_bed_", "")
         await callback.message.edit_text(f"Место {bed}. Выберите действие:", reply_markup=hostel_actions(bed))
-
-    elif data.startswith("hostel_clean_"):
-        bed = data.replace("hostel_clean_", "")
-        await callback.message.edit_text(f"{bed}: выберите действие:", reply_markup=hostel_clean_menu(bed))
-
-    elif data.startswith("hostel_bed_change_"):
-        bed = data.replace("hostel_bed_change_", "")
-        time_now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        await callback.message.edit_text(
-            f"Спасибо!\n\n"
-            f"Хостел: {bed}\n"
-            f"Действие: Смена белья\n"
-            f"Время: {time_now}\n"
-            f"Пользователь: {user.full_name} (@{user.username})",
-            reply_markup=back_to_rooms_button()
-        )
-
-    elif data in ["hostel_common", "hostel_wc_top", "hostel_wc_bottom"]:
-        mapping = {
-            "hostel_common": "Общая зона",
-            "hostel_wc_top": "С/У верхний",
-            "hostel_wc_bottom": "С/У нижний"
-        }
-        zone = mapping[data]
-        await callback.message.edit_text(f"{zone}. Выберите действие:", reply_markup=hostel_actions(zone))
 
     elif data.startswith("hostel_problem_"):
         place = data.replace("hostel_problem_", "")
@@ -224,10 +173,6 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
         await state.set_state(ProblemForm.photo)
         await callback.message.edit_text("Сделайте фото неисправности или напишите 'Нет'.")
 
-    elif data == "none":
-        # кнопка "--" в списке мест — ничего не делаем
-        pass
-
     await callback.answer()
 
 # --- FSM обработчики ---
@@ -243,54 +188,27 @@ async def problem_photo(message: types.Message, state: FSMContext):
     user = message.from_user
     room_number = data["room"]
     description = data["description"]
-    location = data.get("location")
-    time_now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    location = data.get("location", "")
 
     if message.photo:
         file_id = message.photo[-1].file_id
-        photo_info = f"Фото file_id: {file_id}"
+        photo_info = f"file_id: {file_id}"
     else:
         photo_info = message.text
 
-    # тут можно вызвать запись в Google Sheets
-    # append_to_google_sheets(room_number, description, location, photo_info, time_now, user.full_name, user.username)
+    # --- запись в таблицу ---
+    append_problem_to_sheets(user.full_name, room_number, location, description, photo_info)
 
     await message.answer(
-        f"Спасибо! Данные зафиксированы ✅\n\n"
-        f"Объект: {room_number}\n"
-        f"Описание: {description}\n"
-        f"Место: {location}\n"
-        f"Фото/текст: {photo_info}\n"
-        f"Время: {time_now}\n"
-        f"Пользователь: {user.full_name} (@{user.username})",
+        f"Спасибо! Данные о неисправности зафиксированы ✅",
         reply_markup=back_to_rooms_button()
     )
 
     await state.clear()
 
-# --- Фейковый HTTP-сервер для Render ---
-async def _health(_):
-    return web.Response(text="ok")
-
-async def _root(_):
-    return web.Response(text="Bot is running")
-
-async def start_webserver():
-    app = web.Application()
-    app.router.add_get("/", _root)
-    app.router.add_get("/health", _health)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logging.info(f"✅ Web server running on port {PORT}")
-
-# --- RUN ---
+# --- Запуск ---
 async def main():
-    await asyncio.gather(
-        dp.start_polling(bot),
-        start_webserver()
-    )
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
