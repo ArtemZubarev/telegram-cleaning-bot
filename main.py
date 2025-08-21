@@ -1,13 +1,20 @@
 import asyncio
+import logging
+import os
+from datetime import datetime
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-import os
-from datetime import datetime
+
+from aiohttp import web  # для "фейкового" веб-сервера на Render
+
+logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("BOT_TOKEN")
+PORT = int(os.getenv("PORT", "8080"))  # Render передает порт через переменную PORT
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -52,7 +59,7 @@ def cleaning_types(room_number):
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# Кнопка возврата
+# Кнопка возврата к списку номеров
 def back_to_rooms_button():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="К номерам", callback_data="back_to_rooms")]
@@ -97,7 +104,7 @@ def hostel_actions(name):
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# После "Уборка выполнена"
+# После "Уборка выполнена" (в хостеле)
 def hostel_clean_menu(name):
     keyboard = [
         [InlineKeyboardButton(text="Смена белья", callback_data=f"hostel_bed_change_{name}")],
@@ -105,7 +112,7 @@ def hostel_clean_menu(name):
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# Кнопки мест неисправности
+# Кнопки мест неисправности (шаг FSM)
 def location_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Прихожая", callback_data="loc_hall")],
@@ -217,6 +224,10 @@ async def callback_handler(callback: types.CallbackQuery, state: FSMContext):
         await state.set_state(ProblemForm.photo)
         await callback.message.edit_text("Сделайте фото неисправности или напишите 'Нет'.")
 
+    elif data == "none":
+        # кнопка "--" в списке мест — ничего не делаем
+        pass
+
     await callback.answer()
 
 # --- FSM обработчики ---
@@ -241,6 +252,9 @@ async def problem_photo(message: types.Message, state: FSMContext):
     else:
         photo_info = message.text
 
+    # тут можно вызвать запись в Google Sheets
+    # append_to_google_sheets(room_number, description, location, photo_info, time_now, user.full_name, user.username)
+
     await message.answer(
         f"Спасибо! Данные зафиксированы ✅\n\n"
         f"Объект: {room_number}\n"
@@ -254,9 +268,29 @@ async def problem_photo(message: types.Message, state: FSMContext):
 
     await state.clear()
 
+# --- Фейковый HTTP-сервер для Render ---
+async def _health(_):
+    return web.Response(text="ok")
+
+async def _root(_):
+    return web.Response(text="Bot is running")
+
+async def start_webserver():
+    app = web.Application()
+    app.router.add_get("/", _root)
+    app.router.add_get("/health", _health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logging.info(f"✅ Web server running on port {PORT}")
+
 # --- RUN ---
 async def main():
-    await dp.start_polling(bot)
+    await asyncio.gather(
+        dp.start_polling(bot),
+        start_webserver()
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
