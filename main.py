@@ -15,9 +15,9 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # --- Настройки Google Sheets ---
-SERVICE_ACCOUNT_FILE = "service_account.json"
+SERVICE_ACCOUNT_FILE = "/etc/secrets/service_account.json"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-SPREADSHEET_ID = "ВАШ_ID_ТАБЛИЦЫ"  # вставь ID своей таблицы
+SPREADSHEET_ID = "1Y2WhQFrxo-rVnd9yZd-spVGdCcpj9YJh_1dXtSnYr2A"  # вставь ID своей таблицы
 
 creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 gc = gspread.authorize(creds)
